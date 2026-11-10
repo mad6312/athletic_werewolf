@@ -786,6 +786,18 @@ function startGame() {
   while (roles.length < entries.length) roles.push('villager');
   const shuffledRoles = shuffle(roles);
   participants = entries.map(p => p.id);
+  /* 切断済みの残留記録を削除する。結果画面で切断した参加者は inResult=true の
+   * ため切断時には削除されず（本人の再接続・再戦操作の余地を残すため）、
+   * 次の試合開始時に観戦者化されて残り続けていた。観戦者のスポーン割り当て
+   * （spectatorPlayers の並び順）にも数えられるため、サーバーを再起動せずに
+   * 試合を重ねると記録が累積し、やがてスポーン位置が島の外に出ていた。
+   * ここ（次試合の開始時点）で、「切断済み・BOTでない・新試合の参加者でない・
+   * 前試合の残留（inResult または観戦者）」の記録を削除する。再接続の余地を
+   * 残すべき現行試合の参加者・観戦者は、このタイミングでは新試合の参加者
+   * 判定の対象外＝削除条件に当てはまらないため消えない */
+  for (const p of [...players.values()]) {
+    if (!p.connected && !p.isBot && !participants.includes(p.id) && (p.inResult || p.spectator)) players.delete(p.id);
+  }
   /* リザルト画面に残ったまま次の試合が始まった人（未エントリーで、
    * 参加者でも観戦者でもない）は自動で観戦者にする。そのままだと
    * ゲーム画面が出ず、かつ試合中に「再戦」を押すとエントリー扱いに
@@ -877,11 +889,20 @@ function rotMatrixXYZ(rot) {
 // OBB上面のワールドYを返す（足場の水平フットプリント外なら null）。(x,z) はワールド座標
 function obbTopAt(col, x, z) {
   const dx = x - col.cx, dz = z - col.cz, R = col.R;
-  const lx = R[0][0] * dx + R[2][0] * dz; // local = R^T * (dx, 0, dz)
-  const lz = R[0][2] * dx + R[2][2] * dz;
+  /* 上面は平面なので、(x,z) の鉛直線と上面平面の交点Yこそが「見た目の上面Y」。
+   * 以前は「足元XZをローカル座標へ変換し、そのローカル (x,z) における上面点の
+   * 高さ」を返していたが、傾いた足場ではその上面点のワールドXZが足元XZから
+   * ずれるため、見た目と判定が食い違っていた（実測: ロール0.6radで最大0.51m、
+   * 複合回転 (0.61,0.73,0.24) で最大0.89m の浮き/埋まり。無回転・ヨーのみでは
+   * ずれ0）。ここでは交点を解き、その交点のローカル座標でフットプリントを
+   * 判定する（クライアントの longTopAtCollider と同じ式） */
+  const ny = R[1][1];
+  if (Math.abs(ny) < 1e-6) return null; // 上面がほぼ垂直で乗れない
+  const t = (col.hy - R[0][1] * dx - R[2][1] * dz) / ny;
+  const lx = R[0][0] * dx + R[1][0] * t + R[2][0] * dz;
+  const lz = R[0][2] * dx + R[1][2] * t + R[2][2] * dz;
   if (Math.abs(lx) > col.hx + 0.4 || Math.abs(lz) > col.hz + 0.4) return null;
-  const tx = Math.max(-col.hx, Math.min(col.hx, lx)), tz = Math.max(-col.hz, Math.min(col.hz, lz));
-  return col.cy + R[1][0] * tx + R[1][1] * col.hy + R[1][2] * tz;
+  return col.cy + t;
 }
 function longTopAt(pl, x, z) { // ロジックテスト用: 配置データから直接上面Yを引く
   const col = { cx: pl.pos.x, cy: pl.pos.y, cz: pl.pos.z, R: rotMatrixXYZ(pl.rot), hx: 2.5, hy: 0.3, hz: 0.5 };
@@ -1228,14 +1249,22 @@ function handleParticipantDrop(p) {
     if (others.length) { destroyerId = shuffle(others)[0]; const dp = players.get(destroyerId); if (dp && dp.isBot) setTimeout(() => destroyPick(destroyerId, randomPlacedId()), 400); }
     else { destroyDone = true; resolveDestroy(null); }
   }
-  if (phase === 'place' && voteSession && !votes.has(p.id)) { votes.set(p.id, []); checkVoteComplete(); } // 投票イベント中の離脱はパス扱いで補完
   /* 切断脱落にも投票脱落と同じ後処理を行う（配置フェーズ＋役職確認
    * フェーズ）: 本人の足場をすべて破壊→カードに戻し→手札と合算→
    * 他の生存プレイヤーへ再配分し、設置総数が減った状態で配置を
    * 継続する。守護/破壊/アスレチックで脱落になる場合は行わない: 配置は
    * 終了済みでカード再配分に意味がなく、足場の破壊は破壊フェーズ
-   * 自体の仕組み（人狼の選択）と競合するため（脱落扱いのみ） */
+   * 自体の仕組み（人狼の選択）と競合するため（脱落扱いのみ）。
+   * ★順序が重要: この回収は「投票の完了判定」より前に行う。以前は
+   * 完了判定が先で、離脱者が最終投票の最後の未投票者だった場合、
+   * checkVoteComplete 内の resolveVoteSession が守護フェーズへ進めて
+   * しまい、その後の (phase === 'place') 条件を満たせず、離脱者の足場が
+   * 回収されないまま残った（実測再現あり）。先に回収しておけば、投票
+   * 解決側は「設置数が減った状態」を正として判定でき（最終投票でも
+   * 設置数不足なら配置再開になる）、投票で別人が脱落した場合の回収は
+   * resolveVoteSession 側が自分の対象にだけ行うため二重にもならない */
   if ((phase === 'place' || phase === 'role') && newlyEliminated) applyEliminationCleanup(p);
+  if (phase === 'place' && voteSession && !votes.has(p.id)) { votes.set(p.id, []); checkVoteComplete(); } // 投票イベント中の離脱はパス扱いで補完
   // 手番保持者がゴースト化したら、手番は自動で次へ進む（塩漬けにしない）
   if (phase === 'place' && !voteSession && currentTurnPlayer() === p) advanceTurn();
   if (phase === 'guard' && guardCurrent === p.id) { guardCurrent = null; nextGuard(); }
@@ -1365,9 +1394,14 @@ io.on('connection', (socket) => {
     }
     // BOT数変更後の人数（人間エントリー＋設定BOT数。参加枠の上限10で頭打ち）
     const nAfter = Math.min(10, humansEntered + next.botCount);
+    /* 検証は表示範囲と一致させる: エントリーが2人以下でもモーダルには
+     * 3人用の範囲が表示される（fillRuleRanges が Math.max(3, 人数) で表示）
+     * ため、検証人数も最低3人として3人用の範囲・上限をそのまま適用する。
+     * 以前は「人数が3未満のときはエラーを捨てて緩く保持し、開始時に
+     * 再検証する」扱いで、2人以下のロビーでは範囲外の役職設定が警告なく
+     * 決定できてしまっていた（開始時再検証は game:start に残っている） */
     const err = validateRules(Math.max(nAfter, 3), next);
-    if (err && nAfter >= 3) { toast(me.id, err); return; }
-    // 人数が3未満のときは範囲のみ緩く保持し、開始時に再検証する
+    if (err) { toast(me.id, err); return; }
     ruleConfig = next;
     const actualBots = syncBotsToRule(); // ロビー/リザルト時: ルーム内のBOT数を設定値に合わせて増減
     if (actualBots < next.botCount) {

@@ -492,12 +492,15 @@ $('#btn-rules-apply').onclick = () => {
    * 現在の entryCount のままだと、人間3人＋BOT追加と役職増を同じ
    * 操作で設定できない（サーバー側の検証と同じ考え方に揃える） */
   const botsEnteredNow = S.players.filter(p => p.isBot && p.entered).length;
-  const n = Math.min(10, (S.entryCount - botsEnteredNow) + cfg.botCount), r = ROLE_RANGES[Math.min(10, Math.max(3, n))];
-  if (n >= 3) {
-    if (cfg.knight + cfg.madman + cfg.wolf > n) { toast(`役職の合計が参加人数（${n}人）を超えています`, 3000, 'warn'); return; }
-    if (cfg.wolf + cfg.madman > Math.ceil(n / 2) - 1) { toast(`人狼陣営は参加人数の半数未満までです（${n}人の場合は最大${Math.ceil(n / 2) - 1}人）`, 3000, 'warn'); return; }
-    for (const k of ['knight', 'madman', 'wolf']) if (cfg[k] < r[k][0] || cfg[k] > r[k][1]) { toast('設定範囲外の人数があります', 3000, 'warn'); return; }
-  }
+  /* 検証人数は表示範囲（最低3人用）と揃える: エントリー2人以下でも
+   * モーダルには3人用の範囲が表示されるため、合計・陣営上限・範囲の
+   * チェックを3人基準で常時適用する（サーバー側の検証と同じ）。
+   * 以前は実効人数が3未満だとチェック自体を飛ばしており、範囲外の
+   * 設定が警告なく決定できていた */
+  const n = Math.min(10, Math.max(3, (S.entryCount - botsEnteredNow) + cfg.botCount)), r = ROLE_RANGES[n];
+  if (cfg.knight + cfg.madman + cfg.wolf > n) { toast(`役職の合計が参加人数（${n}人）を超えています`, 3000, 'warn'); return; }
+  if (cfg.wolf + cfg.madman > Math.ceil(n / 2) - 1) { toast(`人狼陣営は参加人数の半数未満までです（${n}人の場合は最大${Math.ceil(n / 2) - 1}人）`, 3000, 'warn'); return; }
+  for (const k of ['knight', 'madman', 'wolf']) if (cfg[k] < r[k][0] || cfg[k] > r[k][1]) { toast('設定範囲外の人数があります', 3000, 'warn'); return; }
   socket.emit('rule:set', cfg);
   $('#rules-modal').classList.add('hidden');
 };
@@ -1482,22 +1485,38 @@ const _obbV = new THREE.Vector3();
 function longRotationMatrix(rot) { return new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler((rot && rot.x) || 0, (rot && rot.y) || 0, (rot && rot.z) || 0)); }
 function longTopAtClient(x, z, pl) {
   const R = longRotationMatrix(pl.rot);
-  const Rt = R.clone().transpose();
-  _obbV.set(x - pl.pos.x, 0, z - pl.pos.z).applyMatrix4(Rt);
+  const e = R.elements; // 列優先: R[row][col] = e[col*4+row]
+  const dx = x - pl.pos.x, dz = z - pl.pos.z;
   const hx = 2.5, hy = 0.3, hz = 0.5;
-  if (Math.abs(_obbV.x) > hx + 0.4 || Math.abs(_obbV.z) > hz + 0.4) return null;
-  const top = new THREE.Vector3(clamp(_obbV.x, -hx, hx), hy, clamp(_obbV.z, -hz, hz)).applyMatrix4(R);
-  return pl.pos.y + top.y;
+  /* 上面平面と (x,z) の鉛直線の交点Y（見た目の上面Yそのもの）。
+   * サーバーの obbTopAt と同じ式。旧式（ローカル座標における上面点の
+   * 高さ）は傾斜時に見た目と最大約0.9mずれていた */
+  const ny = e[5];
+  if (Math.abs(ny) < 1e-6) return null;
+  const t = (hy - e[4] * dx - e[6] * dz) / ny;
+  const lx = e[0] * dx + e[1] * t + e[2] * dz;
+  const lz = e[8] * dx + e[9] * t + e[10] * dz;
+  if (Math.abs(lx) > hx + 0.4 || Math.abs(lz) > hz + 0.4) return null;
+  return pl.pos.y + t;
 }
 /* 細長の足元上面Y: ワールド (x,z) 地点でのOBB上面の高さを返す（範囲外は null）。
  * 上面は足位置だけの滑らかな関数なので、静止していれば毎フレーム同じ値になる */
 function longTopAtCollider(c, x, z) {
   const R = longRotationMatrix(c.rot);
-  const Rt = R.clone().transpose();
-  _obbV.set(x - c.center.x, 0, z - c.center.z).applyMatrix4(Rt);
-  if (Math.abs(_obbV.x) > c.hx + 0.4 || Math.abs(_obbV.z) > c.hz + 0.4) return null;
-  const top = new THREE.Vector3(clamp(_obbV.x, -c.hx, c.hx), c.hy, clamp(_obbV.z, -c.hz, c.hz)).applyMatrix4(R);
-  return c.center.y + top.y;
+  const e = R.elements; // 列優先: R[row][col] = e[col*4+row]
+  const dx = x - c.center.x, dz = z - c.center.z;
+  /* 上面平面と (x,z) の鉛直線の交点Yを返す（サーバーの obbTopAt と同じ式）。
+   * 旧式は「足元XZのローカル座標における上面点の高さ」で、傾いた細長では
+   * その点のワールドXZが足元とずれるため、見た目より浮く/埋まるずれが
+   * 出ていた（実測: ロール0.6radで最大0.51m、複合回転で最大0.89m）。
+   * 交点のローカル座標でフットプリントを判定する */
+  const ny = e[5];
+  if (Math.abs(ny) < 1e-6) return null; // 上面がほぼ垂直で乗れない
+  const t = (c.hy - e[4] * dx - e[6] * dz) / ny;
+  const lx = e[0] * dx + e[1] * t + e[2] * dz;
+  const lz = e[8] * dx + e[9] * t + e[10] * dz;
+  if (Math.abs(lx) > c.hx + 0.4 || Math.abs(lz) > c.hz + 0.4) return null;
+  return c.center.y + t;
 }
 function collideLong(c) {
   /* 支持判定を主経路にする（項目7）。
