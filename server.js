@@ -17,7 +17,12 @@ process.on('unhandledRejection', (e) => { console.error('[aw] unhandledRejection
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-app.use(express.static(path.join(__dirname, 'public')));
+/* 静的ファイルは毎回再検証させる（no-cache）。ZIP を差し替えて更新する運用のため、
+ * ブラウザに古い client.js がキャッシュから残ると、新しいサーバーと古い
+ * クライアントが混ざって検証挙動などが食い違う事故になる（ルール設定モーダルで
+ * 「サーバーは警告を返すのにクライアントは無検証で閉じてしまう」症状の原因）。
+ * ETag による再検証だけなので、ローカル配信では実質コストはない */
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
 const PORT = process.env.PORT || 3000;
 
@@ -886,23 +891,43 @@ function rotMatrixXYZ(rot) {
     [sx * sz - cx * cz * sy, sx * cz + cx * sz * sy, cx * cy],
   ];
 }
-// OBB上面のワールドYを返す（足場の水平フットプリント外なら null）。(x,z) はワールド座標
+// OBBの支持面（乗れる面）のワールドYを返す（フットプリント外なら null）。(x,z) はワールド座標
 function obbTopAt(col, x, z) {
   const dx = x - col.cx, dz = z - col.cz, R = col.R;
-  /* 上面は平面なので、(x,z) の鉛直線と上面平面の交点Yこそが「見た目の上面Y」。
-   * 以前は「足元XZをローカル座標へ変換し、そのローカル (x,z) における上面点の
-   * 高さ」を返していたが、傾いた足場ではその上面点のワールドXZが足元XZから
-   * ずれるため、見た目と判定が食い違っていた（実測: ロール0.6radで最大0.51m、
-   * 複合回転 (0.61,0.73,0.24) で最大0.89m の浮き/埋まり。無回転・ヨーのみでは
-   * ずれ0）。ここでは交点を解き、その交点のローカル座標でフットプリントを
-   * 判定する（クライアントの longTopAtCollider と同じ式） */
-  const ny = R[1][1];
-  if (Math.abs(ny) < 1e-6) return null; // 上面がほぼ垂直で乗れない
-  const t = (col.hy - R[0][1] * dx - R[2][1] * dz) / ny;
-  const lx = R[0][0] * dx + R[1][0] * t + R[2][0] * dz;
-  const lz = R[0][2] * dx + R[1][2] * t + R[2][2] * dz;
-  if (Math.abs(lx) > col.hx + 0.4 || Math.abs(lz) > col.hz + 0.4) return null;
-  return col.cy + t;
+  const h = [col.hx, col.hy, col.hz];
+  /* 支持面は「元の上面（ローカル+Y面）」とは限らない。細長はホイール回転で
+   * 任意の向きに配置でき、側面（±Z面）や端面（±X面）が上を向くことがある。
+   * 以前はローカル+Y面の平面との交点しか返さなかったため、側面を上にして
+   * 配置すると +Y面がほぼ垂直（法線Y≈0）になって支持が一切なく（乗れない）、
+   * 裏返し（180°）では下面の平面を返して見た目より 0.6m 低い位置に立つなど、
+   * 「上を向いた面」が支持面になっていなかった。
+   *
+   * ここでは上向きの全ての面（法線のY成分 >= 0.5、つまり傾斜60度以下）を
+   * 候補とし、(x,z) の鉛直線と各面の平面の交点を求める。交点がその面の
+   * 矩形内にあるものを優先（第1段）し、無ければ +0.4 のマージン内にある
+   * もの（第2段・従来の「端の少し外でも乗れる」許容）から最も高いものを
+   * 返す。第1段を優先するのは、マージンで広げた別面の平面の延長が、
+   * 実際に線が突き抜ける面より高い値を返して浮いて見えるのを防ぐため。
+   * ボックスの最も上を向いた面の法線Yは常に 1/√3 ≈ 0.577 以上になるため、
+   * どの向きでも支持面は必ず1つ存在する。逆に傾斜60度を超える急な面は
+   * 候補に入らない（側面の押し出し側が担当する）。
+   * 交点Yの計算自体は従来の厳密式（上面平面との交点）と同じ考え方で、
+   * 対象面を一般化したもの（クライアントの longTopAtCollider と同じ式） */
+  let bestExact = null, bestMargin = null;
+  for (let a = 0; a < 3; a++) {
+    for (let s = 1; s >= -1; s -= 2) {
+      const ny = s * R[1][a];
+      if (ny < 0.5) continue; // 下向き・急な面は支持面にしない
+      const t = (s * h[a] - R[0][a] * dx - R[2][a] * dz) / R[1][a];
+      const o1 = (a + 1) % 3, o2 = (a + 2) % 3;
+      const l1 = R[0][o1] * dx + R[1][o1] * t + R[2][o1] * dz;
+      const l2 = R[0][o2] * dx + R[1][o2] * t + R[2][o2] * dz;
+      const y = col.cy + t;
+      if (Math.abs(l1) <= h[o1] && Math.abs(l2) <= h[o2]) { if (bestExact === null || y > bestExact) bestExact = y; }
+      else if (Math.abs(l1) <= h[o1] + 0.4 && Math.abs(l2) <= h[o2] + 0.4) { if (bestMargin === null || y > bestMargin) bestMargin = y; }
+    }
+  }
+  return bestExact !== null ? bestExact : bestMargin;
 }
 function longTopAt(pl, x, z) { // ロジックテスト用: 配置データから直接上面Yを引く
   const col = { cx: pl.pos.x, cy: pl.pos.y, cz: pl.pos.z, R: rotMatrixXYZ(pl.rot), hx: 2.5, hy: 0.3, hz: 0.5 };

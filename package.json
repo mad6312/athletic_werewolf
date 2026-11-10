@@ -22,7 +22,8 @@
     "test:interp": "node test/interp_test.js",
     "test:fps": "node test/fps_physics_test.js",
     "test:batch11": "node test/batch11_test.js",
-    "test:browser11": "node test/browser_batch11_test.js"
+    "test:browser11": "node test/browser_batch11_test.js",
+    "test:rules": "node test/rules_modal_test.js"
   },
   "version": "1.0.0"
 }

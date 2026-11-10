@@ -323,7 +323,13 @@ function renderUI() {
     renderPhaseUI();
   }
   /* ルールモーダルの範囲表示を最新人数で更新（仕様19.4） */
-  if (!$('#rules-modal').classList.contains('hidden')) fillRuleRanges();
+  if (!$('#rules-modal').classList.contains('hidden')) {
+    fillRuleRanges();
+    /* ルール適用の確定確認: 要求した設定がサーバーに受理されて
+     * ruleConfig に反映されたら、その時点でモーダルを閉じる。
+     * 拒否された場合は一致しないので開いたままになる */
+    if (ruleApplyPending && ruleConfigMatches(ruleApplyPending)) { ruleApplyPending = null; $('#rules-modal').classList.add('hidden'); }
+  }
   $('#btn-force-end').classList.toggle('hidden', !(isHost() && !['lobby', 'result'].includes(S.phase)));
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -474,10 +480,10 @@ phNum.onchange = () => {
 };
 
 /* ============ ルール設定モーダル ============ */
-$('#btn-rules').onclick = () => { fillRuleRanges(); $('#rule-knight').value = S.ruleConfig.knight; $('#rule-madman').value = S.ruleConfig.madman; $('#rule-wolf').value = S.ruleConfig.wolf; $('#rule-time').value = String(S.ruleConfig.timeMin || 5); $('#rule-time-val').textContent = (S.ruleConfig.timeMin || 5) + '分'; $('#rule-bots').value = String(S.ruleConfig.botCount || 0); $('#rule-gauge').checked = !!S.ruleConfig.gauge; const cp = Number(S.ruleConfig.chargePower); $('#rule-power').value = String(Number.isFinite(cp) ? cp : 1); $('#rule-power-val').textContent = (Number.isFinite(cp) ? cp : 1).toFixed(1) + '倍'; $('#rules-modal').classList.remove('hidden'); };
+$('#btn-rules').onclick = () => { ruleApplyPending = null; fillRuleRanges(); $('#rule-knight').value = S.ruleConfig.knight; $('#rule-madman').value = S.ruleConfig.madman; $('#rule-wolf').value = S.ruleConfig.wolf; $('#rule-time').value = String(S.ruleConfig.timeMin || 5); $('#rule-time-val').textContent = (S.ruleConfig.timeMin || 5) + '分'; $('#rule-bots').value = String(S.ruleConfig.botCount || 0); $('#rule-gauge').checked = !!S.ruleConfig.gauge; const cp = Number(S.ruleConfig.chargePower); $('#rule-power').value = String(Number.isFinite(cp) ? cp : 1); $('#rule-power-val').textContent = (Number.isFinite(cp) ? cp : 1).toFixed(1) + '倍'; $('#rules-modal').classList.remove('hidden'); };
 $('#rule-time').oninput = (e) => { $('#rule-time-val').textContent = e.target.value + '分'; };
 $('#rule-power').oninput = (e) => { $('#rule-power-val').textContent = Number(e.target.value).toFixed(1) + '倍'; };
-$('#btn-rules-close').onclick = () => $('#rules-modal').classList.add('hidden');
+$('#btn-rules-close').onclick = () => { ruleApplyPending = null; $('#rules-modal').classList.add('hidden'); };
 function fillRuleRanges() {
   const n = Math.min(10, Math.max(3, S ? S.entryCount : 3));
   const r = ROLE_RANGES[n];
@@ -485,6 +491,23 @@ function fillRuleRanges() {
   $('#range-knight').textContent = `（${r.knight[0]}〜${r.knight[1]}人）`;
   $('#range-madman').textContent = `（${r.madman[0]}〜${r.madman[1]}人）`;
   $('#range-wolf').textContent = `（${r.wolf[0]}〜${r.wolf[1]}人）`;
+}
+/* ルール適用の「確定待ち」。決定を押してもモーダルは即座には閉じず、
+ * サーバーが受理して state:sync の ruleConfig が要求どおりになった時点で
+ * 閉じる（renderUI 内で照合）。以前は emit と同時に閉じていたため、
+ * サーバー側が拒否した場合（警告トーストは届く）にモーダルだけ閉じて
+ * しまう不整合があった。特に、古いクライアント（人数が3未満だと検証を
+ * 飛ばす版）がキャッシュに残っていると、2人以下のときだけ「警告は出る
+ * のにモーダルが閉じる」症状になっていた。サーバーの受理を閉じる条件に
+ * することで、どちらの検証で弾かれても挙動が「警告を表示して閉じない」
+ * に統一される */
+let ruleApplyPending = null;
+function ruleConfigMatches(cfg) {
+  const rc = S && S.ruleConfig;
+  if (!rc || !cfg) return false;
+  return rc.knight === cfg.knight && rc.madman === cfg.madman && rc.wolf === cfg.wolf
+    && rc.timeMin === cfg.timeMin && rc.botCount === cfg.botCount && !!rc.gauge === !!cfg.gauge
+    && Math.round(Number(rc.chargePower) * 10) === Math.round(Number(cfg.chargePower) * 10);
 }
 $('#btn-rules-apply').onclick = () => {
   const cfg = { knight: Number($('#rule-knight').value) | 0, madman: Number($('#rule-madman').value) | 0, wolf: Number($('#rule-wolf').value) | 0, timeMin: Number($('#rule-time').value) | 0, botCount: Number($('#rule-bots').value) | 0, gauge: $('#rule-gauge').checked, chargePower: Number($('#rule-power').value) };
@@ -501,8 +524,12 @@ $('#btn-rules-apply').onclick = () => {
   if (cfg.knight + cfg.madman + cfg.wolf > n) { toast(`役職の合計が参加人数（${n}人）を超えています`, 3000, 'warn'); return; }
   if (cfg.wolf + cfg.madman > Math.ceil(n / 2) - 1) { toast(`人狼陣営は参加人数の半数未満までです（${n}人の場合は最大${Math.ceil(n / 2) - 1}人）`, 3000, 'warn'); return; }
   for (const k of ['knight', 'madman', 'wolf']) if (cfg[k] < r[k][0] || cfg[k] > r[k][1]) { toast('設定範囲外の人数があります', 3000, 'warn'); return; }
+  ruleApplyPending = cfg;
   socket.emit('rule:set', cfg);
-  $('#rules-modal').classList.add('hidden');
+  /* モーダルはここでは閉じない。サーバーが受理すれば state:sync で
+   * ruleConfig が一致し、その時点で renderUI が閉じる（受理時はサーバーが
+   * 必ず syncAll するため、同値の再適用でも確認が届く）。拒否された場合は
+   * 一致しないため開いたままになり、警告トーストだけが表示される */
 };
 
 /* ============ 設定モーダル ============ */
@@ -1483,40 +1510,50 @@ function colliders(t) {
  * ローカル軸で判定する（サーバーの obbTopAt と同じ考え方・同じ回転行列） */
 const _obbV = new THREE.Vector3();
 function longRotationMatrix(rot) { return new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler((rot && rot.x) || 0, (rot && rot.y) || 0, (rot && rot.z) || 0)); }
+/* 上向きの面（法線Y >= 0.5）すべてを候補に、(x,z) の鉛直線との交点Yを返す。
+ * 元の上面（ローカル+Y面）以外の面が上を向く配置（側面・端面が上、裏返し）
+ * でも、その面が支持面になる（サーバーの obbTopAt と同じ方式・同じ式）。
+ * 交点が面の矩形内にあるものを優先し、無ければ +0.4 マージン内のものから
+ * 最も高いものを返す */
+function longTopFromElements(e, cx, cy, cz, h, x, z) {
+  const dx = x - cx, dz = z - cz;
+  let bestExact = null, bestMargin = null;
+  for (let a = 0; a < 3; a++) {
+    for (let s = 1; s >= -1; s -= 2) {
+      const ny = s * e[a * 4 + 1];
+      if (ny < 0.5) continue; // 下向き・急な面（傾斜60度超）は支持面にしない
+      const t = (s * h[a] - e[a * 4] * dx - e[a * 4 + 2] * dz) / e[a * 4 + 1];
+      const o1 = (a + 1) % 3, o2 = (a + 2) % 3;
+      const l1 = e[o1 * 4] * dx + e[o1 * 4 + 1] * t + e[o1 * 4 + 2] * dz;
+      const l2 = e[o2 * 4] * dx + e[o2 * 4 + 1] * t + e[o2 * 4 + 2] * dz;
+      const y = cy + t;
+      if (Math.abs(l1) <= h[o1] && Math.abs(l2) <= h[o2]) { if (bestExact === null || y > bestExact) bestExact = y; }
+      else if (Math.abs(l1) <= h[o1] + 0.4 && Math.abs(l2) <= h[o2] + 0.4) { if (bestMargin === null || y > bestMargin) bestMargin = y; }
+    }
+  }
+  return bestExact !== null ? bestExact : bestMargin;
+}
 function longTopAtClient(x, z, pl) {
   const R = longRotationMatrix(pl.rot);
   const e = R.elements; // 列優先: R[row][col] = e[col*4+row]
-  const dx = x - pl.pos.x, dz = z - pl.pos.z;
-  const hx = 2.5, hy = 0.3, hz = 0.5;
-  /* 上面平面と (x,z) の鉛直線の交点Y（見た目の上面Yそのもの）。
+  /* 支持面の平面と (x,z) の鉛直線の交点Y（見た目の上面Yそのもの）。
    * サーバーの obbTopAt と同じ式。旧式（ローカル座標における上面点の
-   * 高さ）は傾斜時に見た目と最大約0.9mずれていた */
-  const ny = e[5];
-  if (Math.abs(ny) < 1e-6) return null;
-  const t = (hy - e[4] * dx - e[6] * dz) / ny;
-  const lx = e[0] * dx + e[1] * t + e[2] * dz;
-  const lz = e[8] * dx + e[9] * t + e[10] * dz;
-  if (Math.abs(lx) > hx + 0.4 || Math.abs(lz) > hz + 0.4) return null;
-  return pl.pos.y + t;
+   * 高さ）は傾斜時に見た目と最大約0.9mずれていた。また旧・厳密式は
+   * ローカル+Y面しか見ておらず、側面や端面が上の配置では支持が無かった */
+  return longTopFromElements(e, pl.pos.x, pl.pos.y, pl.pos.z, [2.5, 0.3, 0.5], x, z);
 }
 /* 細長の足元上面Y: ワールド (x,z) 地点でのOBB上面の高さを返す（範囲外は null）。
  * 上面は足位置だけの滑らかな関数なので、静止していれば毎フレーム同じ値になる */
 function longTopAtCollider(c, x, z) {
   const R = longRotationMatrix(c.rot);
   const e = R.elements; // 列優先: R[row][col] = e[col*4+row]
-  const dx = x - c.center.x, dz = z - c.center.z;
-  /* 上面平面と (x,z) の鉛直線の交点Yを返す（サーバーの obbTopAt と同じ式）。
+  /* 支持面の平面と (x,z) の鉛直線の交点Yを返す（サーバーの obbTopAt と同じ式）。
    * 旧式は「足元XZのローカル座標における上面点の高さ」で、傾いた細長では
    * その点のワールドXZが足元とずれるため、見た目より浮く/埋まるずれが
    * 出ていた（実測: ロール0.6radで最大0.51m、複合回転で最大0.89m）。
-   * 交点のローカル座標でフットプリントを判定する */
-  const ny = e[5];
-  if (Math.abs(ny) < 1e-6) return null; // 上面がほぼ垂直で乗れない
-  const t = (c.hy - e[4] * dx - e[6] * dz) / ny;
-  const lx = e[0] * dx + e[1] * t + e[2] * dz;
-  const lz = e[8] * dx + e[9] * t + e[10] * dz;
-  if (Math.abs(lx) > c.hx + 0.4 || Math.abs(lz) > c.hz + 0.4) return null;
-  return c.center.y + t;
+   * 交点のローカル座標でフットプリントを判定する。支持面は元の上面に
+   * 限らず、上を向いた面（側面・端面・裏返しの下面）も対象になる */
+  return longTopFromElements(e, c.center.x, c.center.y, c.center.z, [c.hx, c.hy, c.hz], x, z);
 }
 function collideLong(c) {
   /* 支持判定を主経路にする（項目7）。
@@ -1548,15 +1585,24 @@ function collideLong(c) {
   const lp = new THREE.Vector3(player.pos.x, player.pos.y + 0.8, player.pos.z).sub(center).applyMatrix4(Rt);
   const ox = (c.hx + 0.4) - Math.abs(lp.x), oy = (c.hy + 0.8) - Math.abs(lp.y), oz = (c.hz + 0.4) - Math.abs(lp.z);
   if (ox <= 0 || oy <= 0 || oz <= 0) return false;
+  const overlaps = [ox, oy, oz], lpv = [lp.x, lp.y, lp.z];
   const min = Math.min(ox, oy, oz);
-  if (min === oy && lp.y > 0) return false; // 上面側は支持判定が担当
+  const minAxis = overlaps.indexOf(min);
+  /* 支持面（最も上を向いた面: ローカル軸のうち法線Y成分が最大の面）側の
+   * 押し出しは支持判定が担当する。以前は「ローカル+Y面の正側」決め打ち
+   * だったため、側面や裏面が上を向く配置では、支持判定と押し出しが
+   * 同じ面を取り合って干渉しうる状態だった */
+  const e = R.elements;
+  let upAxis = 1, upSign = 1, upNy = -1;
+  for (let a = 0; a < 3; a++) { const v = e[a * 4 + 1]; if (Math.abs(v) > upNy) { upNy = Math.abs(v); upAxis = a; upSign = v >= 0 ? 1 : -1; } }
+  if (minAxis === upAxis && Math.sign(lpv[minAxis]) === upSign) return false; // 支持面側は支持判定が担当
   let axis, pen;
-  if (min === ox) { axis = new THREE.Vector3(Math.sign(lp.x) || 1, 0, 0); pen = ox; }
-  else if (min === oy) { axis = new THREE.Vector3(0, Math.sign(lp.y) || 1, 0); pen = oy; }
+  if (minAxis === 0) { axis = new THREE.Vector3(Math.sign(lp.x) || 1, 0, 0); pen = ox; }
+  else if (minAxis === 1) { axis = new THREE.Vector3(0, Math.sign(lp.y) || 1, 0); pen = oy; }
   else { axis = new THREE.Vector3(0, 0, Math.sign(lp.z) || 1); pen = oz; }
   const world = axis.applyMatrix4(R); // 回転行列のみ（平行移動なし）なので方向変換として使える
   player.pos.x += world.x * pen; player.pos.y += world.y * pen; player.pos.z += world.z * pen;
-  if (min === oy && lp.y < 0) athletic.vy = Math.min(athletic.vy, 0);
+  if (minAxis === upAxis && Math.sign(lpv[minAxis]) === -upSign) athletic.vy = Math.min(athletic.vy, 0); // 支持面の反対側（下向き面）への頭ぶつけ
   return false; // 側面・下面の押し出しのみ（支持はしていない）
 }
 /* ============ 溜めジャンプの開始・キャンセル・発動 ============ */
@@ -1908,8 +1954,13 @@ let padPrev = [];
  *  - ドリフト追従（試合中も常時）: 小さな一定値（|値|<=0.5）が
  *    2.5秒安定したら静止値として再校正し、自動で回復する。
  *    大きく倒した入力（全速前進など）は大きさの上限で絶対に採用
- *    されず、微振動のある通常の保持は「±0.02以内で2.5秒不変」の
- *    条件を満たさないため誤発しない。
+ *    されない。さらに「滑らかな移動の痕跡」がある保持エピソード中の
+ *    候補は採用対象から外れる: 小さな一定倒しを保持し続ける操作
+ *    （傾けた細長の頂点でバランスを取る等）は、人の手で倒した以上
+ *    必ず滑らかに移動して到達しているためドリフトと区別でき、
+ *    離した後に逆向きの入力が残って勝手に動き出す誤採用が起きない。
+ *    本物の静止オフセットは一段のステップとして現れるため、
+ *    従来どおり自動回復の対象になる。
  *  - 再接続時: padNeutralStore に保存した確定値を復元して開始し、
  *    初回ウィンドウの採用は行わない（倒したまま再接続しても、
  *    倒した値はドリフト追従の上限規則で採用されない）。
