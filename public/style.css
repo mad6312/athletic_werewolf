@@ -1,0 +1,114 @@
+* { box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body { margin: 0; font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; background: #0b1226; color: #eef2ff; }
+.hidden { display: none !important; }
+button { background: #1e2a4a; color: #eef2ff; border: 1px solid #3b4a73; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+button:hover:not(:disabled) { background: #2b3c66; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: #2563eb; border-color: #3b82f6; font-weight: bold; }
+button.danger { background: #7f1d1d; border-color: #ef4444; }
+input[type=text], input[type=number] { background: #0d1730; color: #fff; border: 1px solid #3b4a73; border-radius: 6px; padding: 6px 8px; }
+label { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.logo { text-align: center; font-size: 42px; margin: 48px 0 4px; }
+.sub { text-align: center; color: #a5b4d4; }
+#lobby-view { height: 100vh; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+.lobby-card { max-width: 560px; width: calc(100% - 32px); margin: 24px auto; background: #111c38; border: 1px solid #2b3c66; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 190px); }
+.lobby-head { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; flex: none; }
+.player-list { list-style: none; padding: 0; margin: 0 0 14px; overflow-y: auto; min-height: 0; flex: 1 1 auto; scrollbar-gutter: stable; }
+.lobby-card .lobby-btns, .lobby-card .hint { flex: none; }
+#lobby-view .logo, #lobby-view .sub { flex: none; }
+.overlay-card h3 { margin: 16px 0 4px; font-size: 15px; color: #a5b4d4; }
+.player-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: #0d1730; border-radius: 8px; margin-bottom: 6px; }
+.color-chip { width: 16px; height: 16px; border-radius: 50%; display: inline-block; border: 2px solid rgba(255,255,255,.5); flex: none; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #334155; }
+.badge.entered { background: #15803d; }
+.badge.host { background: #b45309; }
+.badge.spec { background: #6d28d9; }
+.lobby-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.lobby-btns.center { justify-content: center; }
+.hint { color: #8ea2c9; font-size: 12px; }
+#toast-wrap { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 999; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.toast { background: #1e293b; border: 1px solid #475569; padding: 9px 16px; border-radius: 10px; box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+.toast.warn { border-color: #f59e0b; background: #3a2a05; }
+.toast.ok { border-color: #22c55e; }
+.view { min-height: 100vh; }
+#game-view { display: flex; flex-direction: column; height: 100vh; }
+#opponents-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; padding: 8px; background: #0d1730; min-height: 44px; }
+.opp-chip { display: flex; align-items: center; gap: 6px; background: #16213f; padding: 4px 10px; border-radius: 999px; font-size: 13px; border: 2px solid transparent; }
+.opp-chip.turn { border-color: #facc15; box-shadow: 0 0 10px #facc15aa; }
+.turn-badge { background: #facc15; color: #111; font-size: 11px; padding: 1px 6px; border-radius: 999px; font-weight: bold; }
+.wolf-badge { background: #991b1b; font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+#phase-banner { text-align: center; background: #312e81; padding: 8px; font-weight: bold; }
+#canvas-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+#canvas-wrap canvas { display: block; }
+#self-panel { display: flex; align-items: center; gap: 10px; justify-content: center; background: #0d1730; padding: 8px; flex-wrap: wrap; }
+.role-badge { background: #334155; padding: 2px 10px; border-radius: 999px; font-size: 13px; }
+#hand-cards { display: flex; gap: 6px; }
+.hand-card { background: linear-gradient(160deg, #1d2c52, #101a36); border: 2px solid #41538a; border-radius: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; min-width: 74px; text-align: center; }
+.hand-card.selected { border-color: #facc15; box-shadow: 0 0 10px #facc1588; }
+.hand-card small { display: block; color: #9db1da; }
+#action-panel { background: #16213f; padding: 10px; text-align: center; }
+#action-panel .targets button { margin: 3px; display: inline-flex; align-items: center; gap: 6px; }
+#action-panel .targets button.picked { background: #b45309; border-color: #f59e0b; }
+#action-panel .targets button:disabled { opacity: .45; }
+#action-panel .targets button.vote-done.picked { background: #57451c; }
+#action-panel .targets button.pick-hover { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,.8); animation: pickPulse .5s ease-in-out infinite alternate; }
+@keyframes pickPulse { from { transform: scale(1); } to { transform: scale(1.07); } }
+#place-height-num { width: 68px; }
+#btn-vote-trigger:disabled { opacity: .45; }
+.overlay { position: fixed; inset: 0; background: rgba(3,6,16,.72); display: flex; align-items: center; justify-content: center; z-index: 500; }
+.overlay-card { background: #111c38; border: 1px solid #3b4a73; border-radius: 14px; padding: 24px; max-width: 520px; width: calc(100% - 32px); max-height: 88vh; overflow: auto; }
+.overlay-card.wide { max-width: 640px; }
+/* 設定モーダル: 内容量の少ない設定カードに wide(640px) を使っていたため、
+ * 内容が左に寄って右側に大きな空白ができていた。内容に合わせた幅(430px)に
+ * 狭めて右側の余白を削り、名前入力を横いっぱいに伸ばす＋ボタン行を
+ * 両端配置にして、左右の余白バランスを揃える（他のモーダルと同じ系統） */
+.overlay-card.settings-card { max-width: 430px; padding: 22px 24px; }
+#settings-modal label input[type="text"] { flex: 1; min-width: 0; }
+#settings-modal .lobby-btns { justify-content: space-between; }
+#role-big { font-size: 44px; text-align: center; font-weight: bold; margin: 8px 0; }
+#result-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+#result-table th, #result-table td { border-bottom: 1px solid #2b3c66; padding: 6px; text-align: left; }
+#countdown { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: min(120px, 22vw); font-weight: 900; color: #fff; text-shadow: 0 0 30px #2563eb; pointer-events: none; z-index: 20; overflow: hidden; contain: layout paint; }
+#countdown.slam { animation: slam .45s ease-out; }
+@keyframes slam { 0% { transform: scale(2.6); opacity: 0; } 60% { transform: scale(1); opacity: 1; } 100% { transform: scale(.96); } }
+/* 自分の手番の視覚効果 */
+body.my-turn #canvas-wrap { animation: turnPulse 1.15s ease-in-out infinite; }
+@keyframes turnPulse { 0%, 100% { box-shadow: inset 0 0 0 3px #facc15, inset 0 0 22px rgba(250,204,21,.35); } 50% { box-shadow: inset 0 0 0 5px #fde047, inset 0 0 46px rgba(250,204,21,.65); } }
+#phase-banner.my-turn { background: #b45309; color: #fff; font-size: 18px; letter-spacing: .04em; }
+#self-panel.my-turn { background: #2a3350; box-shadow: 0 -2px 20px rgba(250,204,21,.55); }
+/* パンチ禁止対象の発表演出 */
+#banned-announce { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; z-index: 18; pointer-events: none; background: radial-gradient(ellipse at center, rgba(3,6,16,.25), rgba(3,6,16,.72)); }
+#banned-announce .ba-title { font-size: 30px; font-weight: 900; color: #fca5a5; text-shadow: 0 2px 14px rgba(0,0,0,.8); }
+#banned-announce .ba-name { display: flex; align-items: center; gap: 10px; font-size: 40px; font-weight: 900; color: #fff; background: rgba(127,29,29,.85); border: 2px solid #ef4444; border-radius: 14px; padding: 6px 26px; }
+#banned-announce .ba-name .color-chip { width: 26px; height: 26px; }
+#banned-announce.ba-in { animation: baIn .35s ease-out; }
+@keyframes baIn { 0% { transform: scale(1.25); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+#athletic-banner { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); background: rgba(30,41,59,.92); border: 1px solid #facc15; padding: 8px 22px; border-radius: 999px; font-weight: bold; z-index: 15; }
+#sickness-ui { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+#sickness-ui .visor { position: absolute; inset: 0; border: 14px solid rgba(10,14,24,.85); border-radius: 6px; }
+#sickness-ui .horizon { position: absolute; left: 50%; top: 50%; width: 180px; height: 2px; background: rgba(255,255,255,.55); transform: translate(-50%,-50%); }
+#sickness-ui .center-dot { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: #10b981; transform: translate(-50%,-50%); }
+#vignette { position: absolute; inset: 0; box-shadow: inset 0 0 120px rgba(0,0,0,.9); opacity: 0; transition: opacity .18s; }
+.bind-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid #22315a; }
+.bind-row button { min-width: 200px; }
+.bind-row button.capturing { border-color: #facc15; color: #facc15; }
+.kbd { background: #0d1730; border: 1px solid #3b4a73; border-radius: 5px; padding: 1px 7px; font-family: monospace; }
+/* 投票結果の開示パネル（結果発表時のみ表示。投票中は非公開） */
+#vote-result { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 16; pointer-events: none; background: rgba(13,23,48,.94); border: 1px solid #facc15; border-radius: 12px; padding: 12px 20px; min-width: 300px; max-width: min(520px, 92%); box-shadow: 0 6px 24px rgba(0,0,0,.55); }
+#vote-result .vr-title { font-weight: 900; font-size: 17px; text-align: center; color: #fde047; }
+#vote-result .vr-head { text-align: center; font-weight: bold; margin: 6px 0 8px; }
+#vote-result .vr-list { display: flex; flex-direction: column; gap: 4px; }
+#vote-result .vr-row { display: flex; align-items: center; gap: 7px; font-size: 14px; background: rgba(255,255,255,.06); border-radius: 7px; padding: 4px 10px; }
+#vote-result .vr-colon { color: #facc15; font-weight: bold; }
+#vote-result .vr-voters { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+#vote-result .vr-pass { color: #a5b4d4; }
+/* 溜めジャンプの倍率ゲージ（本人のみ表示。ルール設定「倍率ゲージ」がONのときだけ出す） */
+#charge-gauge { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 15; pointer-events: none; width: min(340px, 70%); height: 22px; background: rgba(13,23,48,.85); border: 1px solid #3b82f6; border-radius: 999px; overflow: hidden; }
+#charge-gauge-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #38bdf8); transition: width .05s linear; }
+#charge-gauge.hot { border-color: #ef4444; }
+#charge-gauge.hot #charge-gauge-fill { background: linear-gradient(90deg, #f97316, #ef4444); }
+#charge-gauge-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+/* 配置確定の確認ダイアログ */
+.overlay-card.confirm-card { max-width: 360px; text-align: center; }
+.overlay-card.confirm-card .lobby-btns { margin-top: 14px; }

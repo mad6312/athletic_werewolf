@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>アスレチック人狼</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>window.THREE || document.write('<script src="js/vendor/three.min.js"><\/script>');</script>
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<div id="toast-wrap"></div>
+
+<!-- ===== ロビー ===== -->
+<section id="lobby-view" class="view">
+  <h1 class="logo">🏃 アスレチック人狼 🐺</h1>
+  <p class="sub">足場を作って、疑って、走り抜けろ。村人陣営がゴールすれば勝ち。</p>
+  <div class="lobby-card">
+    <div class="lobby-head">
+      <span id="entry-count">エントリー 0 / 10</span>
+      <span id="lobby-phase-note"></span>
+    </div>
+    <ul id="player-list" class="player-list"></ul>
+    <div class="lobby-btns">
+      <button id="btn-entry" class="primary">参加する</button>
+      <button id="btn-start" class="primary hidden">ゲーム開始</button>
+      <button id="btn-rules" class="hidden">ルール設定</button>
+      <button id="btn-settings-lobby">⚙ 設定</button>
+    </div>
+    <p class="hint">開始にはエントリー3人以上＋ホストの参加が必要です。試合中の入室者は観戦者になります。</p>
+  </div>
+</section>
+
+<!-- ===== ゲーム画面 ===== -->
+<section id="game-view" class="view hidden">
+  <div id="opponents-bar"></div>
+  <div id="phase-banner" class="hidden"></div>
+  <div id="canvas-wrap">
+    <div id="sickness-ui" class="hidden">
+      <div class="visor"></div><div class="horizon"></div><div class="center-dot"></div><div id="vignette"></div>
+    </div>
+    <div id="countdown" class="hidden"></div>
+    <div id="athletic-banner" class="hidden">アスレチックを開始します</div>
+    <div id="banned-announce" class="hidden"></div>
+    <div id="vote-result" class="hidden"></div>
+    <div id="charge-gauge" class="hidden"><div id="charge-gauge-fill"></div><div id="charge-gauge-label"></div></div>
+  </div>
+  <div id="action-panel" class="hidden"></div>
+  <div id="self-panel">
+    <span id="self-color" class="color-chip"></span>
+    <span id="self-name"></span>
+    <span id="self-role" class="role-badge"></span>
+    <span id="self-status"></span>
+    <div id="hand-cards"></div>
+    <div id="place-controls" class="hidden">
+      <label>高さ <input type="range" id="place-height" min="0.5" max="16" step="0.5" value="1.5"><input type="number" id="place-height-num" min="0.5" max="16" step="0.1" value="1.5"></label>
+      <button id="btn-pass">パス</button>
+      <button id="btn-vote-trigger" title="投票イベントを発生させます（手番は消費しません）">投票</button>
+    </div>
+    <button id="btn-settings-game">⚙ 設定</button>
+  </div>
+</section>
+
+<!-- ===== 役職通知 ===== -->
+<div id="role-overlay" class="overlay hidden">
+  <div class="overlay-card">
+    <h2>あなたの役職は</h2>
+    <div id="role-big"></div>
+    <p id="role-desc"></p>
+    <p id="role-allies"></p>
+  </div>
+</div>
+
+<!-- ===== リザルト ===== -->
+<div id="result-overlay" class="overlay hidden">
+  <div class="overlay-card">
+    <h2 id="result-title"></h2>
+    <p id="result-reason"></p>
+    <table id="result-table"><thead><tr><th>プレイヤー</th><th>役職</th><th>陣営</th><th>状態</th></tr></thead><tbody></tbody></table>
+    <div class="lobby-btns center">
+      <button id="btn-rematch" class="primary">再戦</button>
+      <button id="btn-exit">退出</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 配置確定の確認ダイアログ ===== -->
+<div id="place-confirm-modal" class="overlay hidden">
+  <div class="overlay-card confirm-card">
+    <h2>配置を確定しますか？</h2>
+    <div class="lobby-btns center">
+      <button id="btn-place-yes" class="primary">はい</button>
+      <button id="btn-place-no">いいえ</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ルール設定モーダル（ホストのみ） ===== -->
+<div id="rules-modal" class="overlay hidden">
+  <div class="overlay-card">
+    <h2>ルール設定</h2>
+    <p id="rules-n-note"></p>
+    <label>騎士 <span id="range-knight"></span><input type="number" id="rule-knight" min="0" max="9"></label>
+    <label>狂人 <span id="range-madman"></span><input type="number" id="rule-madman" min="0" max="9"></label>
+    <label>人狼 <span id="range-wolf"></span><input type="number" id="rule-wolf" min="0" max="9"></label>
+    <label>アスレチック制限時間 <input type="range" id="rule-time" min="1" max="10" step="1" value="5"><span id="rule-time-val">5分</span></label>
+    <label>BOT人数 <input type="number" id="rule-bots" min="0" max="9" value="0"> 人</label>
+    <label><input type="checkbox" id="rule-gauge"> 倍率ゲージ（溜めジャンプの溜め中に倍率を表示）</label>
+    <label>溜めジャンプ力 <input type="range" id="rule-power" min="0.5" max="3" step="0.1" value="1"><span id="rule-power-val">1.0倍</span></label>
+    <p class="hint">溜めジャンプ力は、4〜5秒溜めて発動した場合の飛行中の水平移動速度にのみ効きます（垂直の跳躍力・滞空時間・0〜4秒溜め・5秒自動発動には影響しません）。</p>
+    <p class="hint">残りは自動的に村人になります。人狼陣営（人狼+狂人）は参加人数の半数未満まで。</p>
+    <div class="lobby-btns center">
+      <button id="btn-rules-apply" class="primary">決定</button>
+      <button id="btn-rules-close">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 設定モーダル ===== -->
+<div id="settings-modal" class="overlay hidden">
+  <div class="overlay-card settings-card">
+    <h2>設定</h2>
+    <label>プレイヤー名 <input type="text" id="set-name" maxlength="16"><button id="btn-apply-name">変更</button></label>
+    <label><input type="checkbox" id="set-invert-y"> 上下視点反転（Invert Y）</label>
+    <label><input type="checkbox" id="set-sickness"> 3D酔い防止モード</label>
+    <div class="lobby-btns">
+      <button id="btn-open-keyconfig">キーコンフィグを開く</button>
+      <button id="btn-force-end" class="danger hidden">ゲームを強制終了</button>
+      <button id="btn-settings-close" class="primary">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== キーコンフィグモーダル ===== -->
+<div id="keyconfig-modal" class="overlay hidden">
+  <div class="overlay-card wide">
+    <h2>キーコンフィグ</h2>
+    <div class="lobby-btns"><button id="btn-open-mouse">マウス設定を開く</button></div>
+    <h3>キーボード・マウス</h3>
+    <div id="bind-list"></div>
+    <h3>PS4コントローラー</h3>
+    <div id="pad-bind-list"></div>
+    <label><input type="checkbox" id="kc-swap-sticks"> 左/右スティック入れ替え（コントローラー）</label>
+    <p class="hint">割り当てボタンを押してからキー／ボタン／コントローラーのボタンを入力。Shift/Ctrl/Alt＋主キーの組み合わせ（最大2個）や補助キー単独も登録可能。重複は自動で入れ替わります。ESCやモーダル外クリックでキャンセル。</p>
+    <div class="lobby-btns">
+      <button id="btn-bind-reset">初期設定に戻す</button>
+      <button id="btn-keyconfig-close" class="primary">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== マウス設定モーダル ===== -->
+<div id="mouse-modal" class="overlay hidden">
+  <div class="overlay-card">
+    <h2>マウス設定</h2>
+    <label><input type="checkbox" id="set-mouselook"> マウス視点操作（FPSスタイル：キャンバスクリックでポインターロック）</label>
+    <label>感度 <input type="range" id="set-sensitivity" min="0.2" max="3" step="0.1" value="1"><span id="sens-val">1.0</span></label>
+    <div class="lobby-btns center"><button id="btn-mouse-close" class="primary">閉じる</button></div>
+  </div>
+</div>
+
+<script src="js/padmap.js"></script>
+<script src="js/timesync.js"></script>
+<script src="js/charge.js"></script>
+<script src="js/wheelphase.js"></script>
+<script src="js/remoteinterp.js"></script>
+<script src="js/client.js"></script>
+</body>
+</html>

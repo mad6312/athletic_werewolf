@@ -1,0 +1,28 @@
+{
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "three": "^0.128.0"
+  },
+  "description": "アスレチック人狼 - オンライン対戦型3Dアスレチック人狼ゲーム",
+  "main": "server.js",
+  "name": "athletic-werewolf",
+  "scripts": {
+    "start": "node server.js",
+    "test:sim": "node test/simulate.js",
+    "test:vote": "node test/vote_test.js",
+    "test:logic": "node test/logic_test.js",
+    "test:spectator": "node test/spectator_test.js",
+    "test:wipeout": "node test/wipeout_test.js",
+    "test:timing": "node test/vote_panel_timing_test.js",
+    "test:wheel": "node test/wheel_phase_test.js",
+    "test:regression": "node test/regression_test.js",
+    "test:cam": "node test/camera_pad_test.js",
+    "test:interp": "node test/interp_test.js",
+    "test:fps": "node test/fps_physics_test.js",
+    "test:batch11": "node test/batch11_test.js",
+    "test:browser11": "node test/browser_batch11_test.js"
+  },
+  "version": "1.0.0"
+}
