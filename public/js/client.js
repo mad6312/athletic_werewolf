@@ -171,7 +171,7 @@ function updateShatters(dt) {
   for (let i = shatterBursts.length - 1; i >= 0; i--) {
     const b = shatterBursts[i];
     const age = (nowMs - b.born) / 1000;
-    if (age > 0.95) { scene.remove(b.group); b.mat.dispose(); shatterBursts.splice(i, 1); continue; }
+    if (age > 0.95) { scene.remove(b.group); disposeObject3D(b.group); shatterBursts.splice(i, 1); continue; } // 破片ごとの Geometry と共有マテリアルを破棄（以前はマテリアルのみで Geometry が残っていた）
     for (const f of b.frags) {
       f.vy -= 14 * dt;
       f.m.position.x += f.vx * dt; f.m.position.y += f.vy * dt; f.m.position.z += f.vz * dt;
@@ -949,17 +949,37 @@ function initThree() {
   requestAnimationFrame(loop);
 }
 function resize() { if (!renderer) return; const w = $('#canvas-wrap'); const r = w.getBoundingClientRect(); renderer.setSize(Math.max(50, r.width), Math.max(50, r.height)); cam.aspect = r.width / Math.max(1, r.height); cam.updateProjectionMatrix(); }
+/* シーンから除去するオブジェクトツリーの GPU リソースを破棄する。
+ * 足場・プレイヤー・ゴースト等のメッシュは生成のたびに新しい Geometry /
+ * Material / CanvasTexture を作るため、除去時に dispose しないと連戦や
+ * 再構築のたびに GPU メモリへ残り続ける。同一ツリー内で共有されている
+ * もの（竹輪の左右の脚ジオメトリ、プレイヤーの本体色・暗色マテリアル等）は
+ * Set で重複を除き1回だけ破棄する。Sprite のジオメトリは three.js r128
+ * では全スプライト共有の内部バッファのため破棄対象から外す
+ * （スプライトはマテリアルとテクスチャのみ破棄する） */
+function disposeObject3D(root) {
+  if (!root) return;
+  const geos = new Set(), mats = new Set(), texs = new Set();
+  root.traverse(o => {
+    if (o.geometry && !o.isSprite) geos.add(o.geometry);
+    const list = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of list) { mats.add(m); if (m.map) texs.add(m.map); }
+  });
+  for (const t of texs) t.dispose();
+  for (const m of mats) m.dispose();
+  for (const g of geos) g.dispose();
+}
 function rebuildPlatforms() {
   if (!scene || !S) return;
   const sig = S.placed.map(p => p.id).join(',') + '|' + S.phase;
   if (sig === placedSignature) { return; }
   placedSignature = sig;
-  while (platformsGroup.children.length) platformsGroup.remove(platformsGroup.children[0]);
+  while (platformsGroup.children.length) { const ch = platformsGroup.children[0]; platformsGroup.remove(ch); disposeObject3D(ch); }
   platformMeshes.clear();
   for (const pl of S.placed) { const m = makePlatformMesh(pl); platformsGroup.add(m); platformMeshes.set(pl.id, m); }
 }
 function setPlayerPos(p) {
-  player.pos.set(p.x, p.y, p.z); athletic.vy = 0; athletic.standId = null; athletic.standLastCenter = null;
+  player.pos.set(p.x, p.y, p.z); athletic.vy = 0; athletic.standId = null; athletic.standLastCenter = null; athletic.stepStartStandId = null;
   /* 描画補間のアンカーも同じ位置へスナップする（テレポート/リスポーンで
    * 補間が旧位置から滑るのを防ぐ） */
   selfPrevStepPos.copy(player.pos); selfCurrStepPos.copy(player.pos); selfRenderPos.copy(player.pos); physAcc = 0;
@@ -993,8 +1013,8 @@ function snapPlayersToSpawn() {
 /* ============ 配置操作 ============ */
 function updateGhost() {
   if (!scene) return;
-  if (placement.ghost) { scene.remove(placement.ghost); placement.ghost = null; }
-  if (placement.ghostEnd) { scene.remove(placement.ghostEnd); placement.ghostEnd = null; }
+  if (placement.ghost) { scene.remove(placement.ghost); disposeObject3D(placement.ghost); placement.ghost = null; }
+  if (placement.ghostEnd) { scene.remove(placement.ghostEnd); disposeObject3D(placement.ghostEnd); placement.ghostEnd = null; }
   if (!S || S.phase !== 'place' || !placement.selected || !placement.mouseWorld) return;
   const myColor = me() ? me().color.hex : '#ffffff';
   const fake = { id: 'ghost', type: placement.selected, pos: placement.anchor || placement.mouseWorld, end: null, rot: placement.rot, ownerColor: myColor };
@@ -1359,7 +1379,7 @@ function ensurePlayerMeshes() {
   // 観戦者もアスレチック中は「常時ゴースト」のキャラクターとして表示する（項目4）。
   // 以前は参加者しかメッシュが作られず、観戦者は本人視点でも完全に非表示だった
   if (S.phase === 'athletic') for (const p of S.players) if (p.spectator && p.connected) ids.add(p.id);
-  for (const [id, r] of [...remotePlayers.entries()]) if (!ids.has(id)) { playersGroup.remove(r.group); remotePlayers.delete(id); remoteInterpBuffers.delete(id); }
+  for (const [id, r] of [...remotePlayers.entries()]) if (!ids.has(id)) { playersGroup.remove(r.group); disposeObject3D(r.group); remotePlayers.delete(id); remoteInterpBuffers.delete(id); } // 除去するキャラの Geometry/Material/ネームプレートのテクスチャも破棄する
   const participantsNow = S.players.filter(p => p.isParticipant);
   for (const p of S.players.filter(x => ids.has(x.id))) {
     if (!remotePlayers.has(p.id)) {
@@ -1389,7 +1409,7 @@ function ensurePlayerMeshes() {
     }
     const key = p.name + '|' + p.color.hex;
     if (r && r.plateKey !== key) {
-      if (r.plate) r.group.remove(r.plate);
+      if (r.plate) { r.group.remove(r.plate); disposeObject3D(r.plate); } // 作り直す前のプレートのテクスチャ/マテリアルを破棄する
       r.plate = makeNameplate(p.name, p.color.hex);
       r.group.add(r.plate);
       r.plateKey = key;
@@ -1836,6 +1856,14 @@ function stepAthletic(dt, t) {
    * ステップ開始時点の足元高さを控える（着地優先判定 crossedTop 用:
    * 1ステップ内の複数サブステップをまたぐ上面横断を拾うため） */
   athletic.stepStartFeetY = player.pos.y;
+  /* ステップ開始時点の接地足場も控える（竹輪の「乗った瞬間」検出用）。
+   * prevStandId は applyGravityCollide の呼び出しごとに更新されるため、
+   * 溜めジャンプのサブステップ分割では「着地したサブステップの次の
+   * 呼び出し」で prevStandId が着地先と同じになってしまい、ステップ
+   * 終了時の比較が「変化なし」になって platform:stand が送られなかった。
+   * 比較の基準をステップ開始時点に固定すれば、ステップ内のどの
+   * サブステップで着地しても「乗った瞬間」を検出できる */
+  athletic.stepStartStandId = athletic.standId;
   /* 溜めジャンプの跳躍中は垂直初速が非常に大きい（倍率10で約250m/s）ため、
    * 1フレームの縦移動が足場の厚みを超えてすり抜けてしまう。跳躍中は
    * 縦移動が 0.25m 以下になるようサブステップに分割して積分する。
@@ -1875,7 +1903,14 @@ function stepAthletic(dt, t) {
       }
     }
   }
-  if (athletic.standId && athletic.standId !== athletic.prevStandId) {
+  /* 竹輪に「乗った瞬間」を検出してサーバーへ通知する。比較の基準は
+   * prevStandId（直前の applyGravityCollide 呼び出し時点）ではなく
+   * stepStartStandId（このステップ開始時点）: 溜めジャンプのサブステップ
+   * 分割で着地が最終サブステップより前に起きても取りこぼさない。
+   * platform:stand の用途はこの竹輪トリガー通知のみ（サーバー側は
+   * triggerAt 基準で同一サイクル内の再通知を無視するため、万一の
+   * 重複送信も無害） */
+  if (athletic.standId && athletic.standId !== athletic.stepStartStandId) {
     const pl = S.placed.find(x => x.id === athletic.standId);
     if (pl && pl.type === 'chikuwa') socket.emit('platform:stand', { platformId: pl.id });
   }
@@ -2249,4 +2284,4 @@ function updateGhostPositionOnly() {
 }
 /* 配置ゴーストの生成（選択時のみ） */
 const _origRenderHand = renderHand;
-setInterval(() => { if (S && S.phase === 'place' && placement.selected && scene && !placement.ghost) updateGhost(); if (S && (!S.phase || S.phase !== 'place') && placement.ghost) { scene.remove(placement.ghost); placement.ghost = null; } }, 300);
+setInterval(() => { if (S && S.phase === 'place' && placement.selected && scene && !placement.ghost) updateGhost(); if (S && (!S.phase || S.phase !== 'place') && placement.ghost) { scene.remove(placement.ghost); disposeObject3D(placement.ghost); placement.ghost = null; } }, 300);

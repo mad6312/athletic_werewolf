@@ -112,7 +112,7 @@ let botSeq = 0;
 const chikuwaState = new Map(); // platformId -> triggerAt(ms)
 /* フェーズ遷移を伴う遅延タイマーのハンドル。endGame で必ず破棄し、
  * 「強制終了したのに遅れてアスレチックが始まる」ような復活を防ぐ */
-let athleticStartTimer = null, dummyDestroyTimer = null, roleTimer = null;
+let athleticStartTimer = null, dummyDestroyTimer = null, dummyGuardTimer = null, roleTimer = null;
 let pubSeq = 0;
 
 /* ============ 公開ID（F） ============
@@ -412,6 +412,22 @@ function startGuardPhase() {
   guardedIds = new Set();
   guardQueue = shuffle(participants.filter(id => { const p = players.get(id); return p && p.role === 'knight' && !p.eliminated; }));
   guardCurrent = null;
+  /* ルール設定で騎士が1人以上設定されているのに、生存している騎士が
+   * 1人もいない場合は、即座に破壊フェーズへ進まず「ダミーの守護選択
+   * 時間」を設ける。通常の守護フェーズと見分けがつかないよう、表示は
+   * そのまま（騎士が守護対象を選んでいます…）で担当者は割り当てず、
+   * 3〜10秒（サーバー側ランダム）経過させてから、守護を行わずに
+   * 破壊フェーズへ進む（破壊フェーズの人狼全員脱落時のダミー選択時間
+   * と同等の扱い。騎士が0人設定の場合は従来どおり即座に進む。
+   * 生存しているが切断している騎士は従来どおり nextGuard で
+   * スキップされるため、この条件には含めない） */
+  if (ruleConfig.knight >= 1 && !guardQueue.length) {
+    syncAll();
+    const dummyMs = DUMMY_DESTROY_MIN_MS + Math.floor(Math.random() * (DUMMY_DESTROY_MAX_MS - DUMMY_DESTROY_MIN_MS + 1));
+    clearTimeout(dummyGuardTimer);
+    dummyGuardTimer = setTimeout(() => { dummyGuardTimer = null; if (phase === 'guard') startDestroyPhase(); }, dummyMs);
+    return;
+  }
   nextGuard();
 }
 function nextGuard() {
@@ -585,6 +601,7 @@ function endGame(winner, reason, at) {
    * ダミー破壊が遅れて発火して result を上書きするのを防ぐ） */
   clearTimeout(athleticStartTimer); athleticStartTimer = null;
   clearTimeout(dummyDestroyTimer); dummyDestroyTimer = null;
+  clearTimeout(dummyGuardTimer); dummyGuardTimer = null;
   clearTimeout(roleTimer); roleTimer = null;
   for (const id of participants) {
     const p = players.get(id); if (!p) continue;
