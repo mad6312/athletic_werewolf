@@ -10,12 +10,13 @@ if (!sessionId) { sessionId = 'p' + Math.random().toString(36).slice(2, 12) + Da
 const DEFAULT_BINDS = {
   forward: { main: 'KeyW', mods: [] }, back: { main: 'KeyS', mods: [] },
   left: { main: 'KeyA', mods: [] }, right: { main: 'KeyD', mods: [] },
-  jump: { main: 'Space', mods: [] }, punch: { main: 'Shift', mods: [] },
-  chargeJump: { main: 'Mouse0', mods: [] },
+  jump: { main: 'Space', mods: [] }, punch: { main: 'Mouse0', mods: [] },
+  chargeJump: { main: 'Shift', mods: [] },
 };
-/* パンチの初期設定は Shift（修飾キー単独バインド）。左クリック（Mouse0）は
- * 新アクション「溜めジャンプ」の初期設定に割り当てるため変更した。
- * 既存ユーザーの保存済み設定は書き換えず、新アクションの不足分だけ初期値を補う */
+/* パンチの初期設定は左クリック（Mouse0）、溜めジャンプの初期設定は Shift
+ * （修飾キー単独バインド。長押しで溜め、離した瞬間に発動する。押下エッジ
+ * でのみ開始する仕組みは actionDown／chargeInputHeld がそのまま担う）。
+ * 既存ユーザーの保存済み設定は書き換えず、不足分だけ初期値を補う */
 const ACTION_LABELS = { forward: '前進', back: '後退', left: '左移動', right: '右移動', jump: 'ジャンプ', punch: 'パンチ', chargeJump: '溜めジャンプ' };
 const DEFAULT_PAD_BINDS = { jump: 'Pad3', punch: 'Pad2', chargeJump: 'Pad0' };
 const PAD_ACTION_LABELS = { jump: 'ジャンプ（コントローラー）', punch: 'パンチ（コントローラー）', chargeJump: '溜めジャンプ（コントローラー）' };
@@ -412,8 +413,18 @@ function renderActionPanel() {
     panel.innerHTML = `<div>投票 ― 人狼だと思う人を 1 人選ぶかパスしてください</div><div class="targets">${targets.map(p => `<button data-vote="${p.id}" class="${voteSelection.has(p.id) ? 'picked' : ''}"><span class="color-chip" style="background:${p.color.hex}"></span>${escapeHtml(p.name)}</button>`).join('')}</div><button id="btn-vote" class="primary" ${voteSelection.size !== (PRIV ? PRIV.voteNeed : -1) ? 'disabled' : ''}>投票する</button> <button id="btn-vote-pass">パス（誰にも投票しない）</button>`;
     panel.querySelectorAll('[data-vote]').forEach(btn => btn.onclick = () => {
       const id = btn.dataset.vote;
-      if (voteSelection.has(id)) voteSelection.delete(id);
-      else if (voteSelection.size < (PRIV ? PRIV.voteNeed : 0)) voteSelection.add(id);
+      const need = PRIV ? PRIV.voteNeed : 0;
+      if (voteSelection.has(id)) voteSelection.delete(id); // 選択済みを押したら解除（従来どおり）
+      else if (voteSelection.size < need) voteSelection.add(id);
+      else if (need > 0) {
+        /* 上限到達時に別の対象を押したら、既存の選択を新しい対象で置き換える。
+         * 以前は何も起きなかったため、誤クリックに気づいて選び直したつもり
+         * でも古い選択のまま「投票する」を押してしまう事故が起きた。
+         * voteNeed=1 では「選択の移し替え」になる。一般の上限では最も古い
+         * 選択から押し出す。「投票する」を押した後の変更不可は従来どおり */
+        while (voteSelection.size >= need) voteSelection.delete(voteSelection.values().next().value);
+        voteSelection.add(id);
+      }
       renderActionPanel();
     });
     const vb = $('#btn-vote'); if (vb) vb.onclick = () => { socket.emit('vote:submit', { targets: [...voteSelection] }); };
@@ -480,12 +491,23 @@ phNum.onchange = () => {
 };
 
 /* ============ ルール設定モーダル ============ */
-$('#btn-rules').onclick = () => { ruleApplyPending = null; fillRuleRanges(); $('#rule-knight').value = S.ruleConfig.knight; $('#rule-madman').value = S.ruleConfig.madman; $('#rule-wolf').value = S.ruleConfig.wolf; $('#rule-time').value = String(S.ruleConfig.timeMin || 5); $('#rule-time-val').textContent = (S.ruleConfig.timeMin || 5) + '分'; $('#rule-bots').value = String(S.ruleConfig.botCount || 0); $('#rule-gauge').checked = !!S.ruleConfig.gauge; const cp = Number(S.ruleConfig.chargePower); $('#rule-power').value = String(Number.isFinite(cp) ? cp : 1); $('#rule-power-val').textContent = (Number.isFinite(cp) ? cp : 1).toFixed(1) + '倍'; $('#rules-modal').classList.remove('hidden'); };
+$('#btn-rules').onclick = () => { ruleApplyPending = null; $('#rule-knight').value = S.ruleConfig.knight; $('#rule-madman').value = S.ruleConfig.madman; $('#rule-wolf').value = S.ruleConfig.wolf; $('#rule-time').value = String(S.ruleConfig.timeMin || 5); $('#rule-time-val').textContent = (S.ruleConfig.timeMin || 5) + '分'; $('#rule-bots').value = String(S.ruleConfig.botCount || 0); $('#rule-gauge').checked = !!S.ruleConfig.gauge; const cp = Number(S.ruleConfig.chargePower); $('#rule-power').value = String(Number.isFinite(cp) ? cp : 1); $('#rule-power-val').textContent = (Number.isFinite(cp) ? cp : 1).toFixed(1) + '倍'; fillRuleRanges(); $('#rules-modal').classList.remove('hidden'); };
 $('#rule-time').oninput = (e) => { $('#rule-time-val').textContent = e.target.value + '分'; };
 $('#rule-power').oninput = (e) => { $('#rule-power-val').textContent = Number(e.target.value).toFixed(1) + '倍'; };
+/* BOT人数を変えるたびに範囲表示を再計算する（表示と検証の人数を揃える） */
+$('#rule-bots').oninput = () => fillRuleRanges();
 $('#btn-rules-close').onclick = () => { ruleApplyPending = null; $('#rules-modal').classList.add('hidden'); };
+/* 検証・表示に使う人数は「BOT数変更を適用した後の人数」で統一する。
+ * 範囲表示が現在のエントリー人数基準だった頃は、確定時の検証（BOT適用後
+ * 基準）と食い違い、表示上は範囲外でも受理される（またはその逆）ように
+ * 見えていた。適用ボタンの検証もこの関数を使う */
+function ruleEffectiveCount(botCount) {
+  if (!S) return 3;
+  const botsEnteredNow = S.players.filter(p => p.isBot && p.entered).length;
+  return Math.min(10, Math.max(3, (S.entryCount - botsEnteredNow) + (botCount | 0)));
+}
 function fillRuleRanges() {
-  const n = Math.min(10, Math.max(3, S ? S.entryCount : 3));
+  const n = ruleEffectiveCount(Number($('#rule-bots').value) | 0);
   const r = ROLE_RANGES[n];
   $('#rules-n-note').textContent = `現在のエントリー: ${S ? S.entryCount : 0} 人（範囲は ${n} 人用を表示）`;
   $('#range-knight').textContent = `（${r.knight[0]}〜${r.knight[1]}人）`;
@@ -511,16 +533,12 @@ function ruleConfigMatches(cfg) {
 }
 $('#btn-rules-apply').onclick = () => {
   const cfg = { knight: Number($('#rule-knight').value) | 0, madman: Number($('#rule-madman').value) | 0, wolf: Number($('#rule-wolf').value) | 0, timeMin: Number($('#rule-time').value) | 0, botCount: Number($('#rule-bots').value) | 0, gauge: $('#rule-gauge').checked, chargePower: Number($('#rule-power').value) };
-  /* 検証人数は「この設定で BOT 数変更を適用した後の人数」を使う。
-   * 現在の entryCount のままだと、人間3人＋BOT追加と役職増を同じ
-   * 操作で設定できない（サーバー側の検証と同じ考え方に揃える） */
-  const botsEnteredNow = S.players.filter(p => p.isBot && p.entered).length;
-  /* 検証人数は表示範囲（最低3人用）と揃える: エントリー2人以下でも
-   * モーダルには3人用の範囲が表示されるため、合計・陣営上限・範囲の
-   * チェックを3人基準で常時適用する（サーバー側の検証と同じ）。
-   * 以前は実効人数が3未満だとチェック自体を飛ばしており、範囲外の
-   * 設定が警告なく決定できていた */
-  const n = Math.min(10, Math.max(3, (S.entryCount - botsEnteredNow) + cfg.botCount)), r = ROLE_RANGES[n];
+  /* 検証人数は「この設定で BOT 数変更を適用した後の人数」を使う
+   * （ruleEffectiveCount。範囲表示と共通）。現在の entryCount のままだと、
+   * 人間3人＋BOT追加と役職増を同じ操作で設定できない（サーバー側の検証と
+   * 同じ考え方に揃える）。最低3人基準のため、エントリー2人以下でも
+   * モーダルに表示される3人用の範囲でチェックが常時適用される */
+  const n = ruleEffectiveCount(cfg.botCount), r = ROLE_RANGES[n];
   if (cfg.knight + cfg.madman + cfg.wolf > n) { toast(`役職の合計が参加人数（${n}人）を超えています`, 3000, 'warn'); return; }
   if (cfg.wolf + cfg.madman > Math.ceil(n / 2) - 1) { toast(`人狼陣営は参加人数の半数未満までです（${n}人の場合は最大${Math.ceil(n / 2) - 1}人）`, 3000, 'warn'); return; }
   for (const k of ['knight', 'madman', 'wolf']) if (cfg[k] < r[k][0] || cfg[k] > r[k][1]) { toast('設定範囲外の人数があります', 3000, 'warn'); return; }
@@ -990,9 +1008,18 @@ function updateGhost() {
     placement.ghostEnd = makePlatformMesh(fake2, true); scene.add(placement.ghostEnd);
   }
 }
+/* 配置座標のクランプ範囲。サーバー doPlace の pos/end クランプ
+ * （x∈[-30,30]・y∈[0.5,16]・z∈[-18,18]、server.js の doPlace）と一致させる。
+ * 以前はクライアントの終点だけがクランプなしで、範囲を超える終点では
+ * プレビュー（8m移動）と実体（サーバーでクランプされた位置まで）が
+ * 食い違い、斜め方向では移動方向自体が変わってしまっていた */
+const PLACE_CLAMP = { x: 30, yMin: 0.5, yMax: 16, z: 18 };
+function clampPlacePos(p) {
+  return { x: Math.max(-PLACE_CLAMP.x, Math.min(PLACE_CLAMP.x, p.x)), y: Math.max(PLACE_CLAMP.yMin, Math.min(PLACE_CLAMP.yMax, p.y)), z: Math.max(-PLACE_CLAMP.z, Math.min(PLACE_CLAMP.z, p.z)) };
+}
 function slideEnd(anchor, dirPoint) {
   const dx = dirPoint.x - anchor.x, dz = dirPoint.z - anchor.z; const len = Math.hypot(dx, dz) || 1;
-  return { x: anchor.x + dx / len * SLIDE_DIST, y: anchor.y, z: anchor.z + dz / len * SLIDE_DIST };
+  return clampPlacePos({ x: anchor.x + dx / len * SLIDE_DIST, y: anchor.y, z: anchor.z + dz / len * SLIDE_DIST });
 }
 /* 配置の確定フロー（項目8）:
  * 安定・浮島・竹輪・観覧車: クリックで仮配置（固定）→ もう一度クリックで確定
@@ -1747,7 +1774,10 @@ function stepAthletic(dt, t) {
     const pl = S.placed.find(x => x.id === athletic.standId);
     if (pl) {
       const c = platformCurrent(pl, t);
-      const jumpDist = Math.hypot(c.x - athletic.standLastCenter.x, c.z - athletic.standLastCenter.z);
+      /* 瞬間移動の検出は3次元距離で行う。以前は水平距離のみだったため、
+       * 始点と終点の水平位置がほぼ同じで高さだけ違う「垂直テレポ」では
+       * 移動が検出されず、乗員が取り残されずに運ばれてしまっていた */
+      const jumpDist = Math.hypot(c.x - athletic.standLastCenter.x, c.y - athletic.standLastCenter.y, c.z - athletic.standLastCenter.z);
       if (pl.type === 'teleport' && jumpDist > 1) {
         // テレポの瞬間移動では乗員を運ばない（項目23）。運搬デルタを加算せず、
         // 足場だけが消えて乗員はその場に取り残され落下する
@@ -1914,7 +1944,12 @@ function doPunch() {
   const fx = Math.sin(athletic.faceYaw), fz = Math.cos(athletic.faceYaw);
   for (const [id, r] of remotePlayers.entries()) {
     if (id === myId) continue;
-    const p = S.players.find(x => x.id === id); if (!p || p.eliminated) continue;
+    /* 候補は「参加者である生存者」のみ。観戦者（spectator）は eliminated が
+     * false のため以前は候補に入ってしまい、最も近い観戦者が選ばれると
+     * サーバー側で対象外として黙って無視され、その背後にいる本物の相手に
+     * 当たらなかった（観戦者は生存者の画面に表示されないため原因が見えない）。
+     * サーバー側の対象外チェックは最終防衛として維持される */
+    const p = S.players.find(x => x.id === id); if (!p || p.eliminated || p.spectator || !p.isParticipant) continue;
     const dx = r.group.position.x - player.pos.x, dz = r.group.position.z - player.pos.z;
     const dy = r.group.position.y - player.pos.y;
     const d = Math.hypot(dx, dz);

@@ -982,7 +982,9 @@ function botStep(p, t, dt) {
     if (cur && cur.kind === 'obb') { /* 細長は静止足場なので追従不要 */ }
     else if (cur && p._standCenter) {
       const standPl = placed.find(x => x.id === p._standId);
-      const jumpDist = Math.hypot(cur.cx - p._standCenter.cx, cur.cz - p._standCenter.cz);
+      // 瞬間移動の検出は3次元距離（高さの差も含む）。水平距離のみだと
+      // 高さだけ違う垂直テレポで乗員が運ばれてしまう（クライアント側と同式）
+      const jumpDist = Math.hypot(cur.cx - p._standCenter.cx, cur.top - p._standCenter.top, cur.cz - p._standCenter.cz);
       if (standPl && standPl.type === 'teleport' && jumpDist > 1) {
         // テレポの瞬間移動では乗員を運ばない（取り残されて落下する・項目23）
         p._grounded = false; p._vy = 0; p._standId = null; p._standCenter = null;
@@ -1062,7 +1064,7 @@ function serverPhysicsStep(p, t, dt) {
     const cur = cols.find(c => c.id === p._standId);
     if (cur && cur.kind !== 'obb' && p._standCenter) { // 細長は静止足場なので追従不要（BOTと同じ）
       const standPl = placed.find(x => x.id === p._standId);
-      const jumpDist = Math.hypot(cur.cx - p._standCenter.cx, cur.cz - p._standCenter.cz);
+      const jumpDist = Math.hypot(cur.cx - p._standCenter.cx, cur.top - p._standCenter.top, cur.cz - p._standCenter.cz); // 3次元距離（垂直テレポでも検出する）
       if (standPl && standPl.type === 'teleport' && jumpDist > 1) {
         p._groundedSrv = false; p._standId = null; p._standCenter = null; // テレポの瞬間移動では乗員を運ばない
       } else {
